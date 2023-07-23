@@ -1,0 +1,36 @@
+.modal-width{
+    width: 750px !important;
+}
+.fa{
+    font-size: 22px;
+}
+.table>:not(caption)>*>*{
+    border-width : 1px !important;
+}
+@media (min-width: 992px)
+{
+.modal-lg, .modal-xl {
+    max-width: 80% !important;
+}
+}
+.modal-content {
+    /* width: 1355px !important; */
+    height:100% !important
+}
+.form-control {
+
+    width:50% !important;
+}
+html:not([dir="rtl"]) .sidebar-lg-show.sidebar-fixed .main, html:not([dir="rtl"]) .sidebar-lg-show.sidebar-fixed .app-footer, html:not([dir="rtl"]) .sidebar-show.sidebar-fixed .main, html:not([dir="rtl"]) .sidebar-show.sidebar-fixed .app-footer
+{
+    margin-left: 235px !important;
+}
+.sidebar-fixed .app-header + .app-body .sidebar{
+    width:235px;
+}
+.sidebar .nav{
+    width:235px !important
+}
+.sidebar .sidebar-nav{
+    width:235px !important
+}

@@ -1,0 +1,11 @@
+.MuiAutocomplete-inputRoot[class*="MuiOutlinedInput-root"] .MuiAutocomplete-input{
+    padding: 0 !important;
+}
+.MuiFormControl-fullWidth{
+    width: 200px !important;
+
+}
+::placeholder{
+    color: black !important;
+    font-weight:300
+}

@@ -1,0 +1,1558 @@
+import axios from "axios";
+import { useLocation } from "react-router-dom";
+import * as yup from "yup";
+import { yupResolver } from "@hookform/resolvers/yup";
+import React, { useEffect, useState, useRef } from "react";
+import Tab from "react-bootstrap/Tab";
+import Tabs from "react-bootstrap/Tabs";
+import DataTable from "react-data-table-component";
+import DatePicker from "react-datepicker";
+import url from "../../config";
+import Form from "react-bootstrap/Form";
+import { useForm } from "react-hook-form";
+import moment from "moment";
+import Modal from "react-bootstrap/Modal";
+import { Link } from "react-router-dom";
+import "../../../index.css";
+import DynamicSearch from "../../../components/AutoComplete/DynamicSearch";
+import ProductSearch from "../../../components/AutoComplete/ProductSearch";
+import {
+  deleteAPI,
+  getAPI,
+  postFormDataAPI,
+} from "../../../apiServices/AxiousFetch";
+import apinames from "../../../apiServices/ApiConstant";
+const initialState = {
+  material_type: "",
+  size: "",
+  rate: "",
+  qty: 0,
+  uom: "",
+  sub_qty: 1,
+  sub_uom: "",
+  freight: 0,
+  amount: 0,
+  product_id: 0,
+  unit_qty: 0,
+  oldQty: 0, // to store in database
+};
+const validationSchema = yup.object().shape({
+  invoice_date: yup
+    .date()
+    .typeError("Invoice Date is required")
+    .required("Invoice date is required"),
+  received_date: yup
+    .date()
+    .typeError("Received Date is required")
+    .required("Received date is required"),
+  supplier: yup.string().required("Supplier is required"),
+  vehical_no: yup.string().required("Vehicle number is required"),
+  // invoice_no: yup.string().required("Invoice number is required"),
+  arrayNewObject: yup.array().of(
+    yup.object().shape({
+      size: yup.string().required("Size date is required"),
+      rate: yup
+        .number()
+        .positive()
+        .integer()
+        .required("Received date is required"),
+      // supplier: yup.string().required('Supplier is required'),
+      // vehical_no: yup.string().required('Vehicle number is required'),
+      // invoice_no: yup.string().required('Invoice number is required'),
+    })
+  ),
+});
+
+const Purchaseledger = () => {
+  const [subQtyDisabled, setSubQtyDisabled] = useState(true);
+
+  const childRef = useRef(); // forward ref transfering from child to parent
+  const [select, setSelect] = useState({});
+  const [isError, setIsError] = useState(false);
+
+  const [productSelect, setProductSelect] = useState({});
+  const [sget, setSGet] = useState([]);
+  const [startDate, setStartDate] = useState(new Date());
+  const [endDate, setEndDate] = useState(new Date());
+  const [arrayObject, setArrayObject] = useState([]); // to store all the product data
+  const [masterArrayObject, setMasterArrayObject] = useState([]); // to store all the old qty for stocks
+  const [amount, setAmount] = useState(0); //to store ammount
+  const [get, setGet] = useState([]); // get api
+  const [productGet, setProductGet] = useState([]); // product master name and uom gst
+  const [api, setApi] = useState([]); // filter
+  const [tab, setTab] = useState(1);
+  const [editId, setEditId] = useState();
+  const [grandTotal, setGrandTotal] = useState(0);
+  const [oldGrandTotal, setOldGrandTotal] = useState(0);
+  const [lgShow, setLgShow] = useState(false);
+  const [add, setAdd] = useState(initialState);
+  const formRef = useRef();
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm({
+    mode: "onChange",
+    resolver: yupResolver(validationSchema),
+  });
+ const location = useLocation();
+  const {
+    register: register2,
+    setValue,
+    reset,
+    watch,
+    formState: { errors: errors2 },
+    handleSubmit: handleSubmit2,
+  } = useForm({
+    mode: "onchange",
+  });
+  const values = watch();
+
+  const productChange = (e, key) => {
+    setAdd((prevState) => ({
+      ...prevState,
+      [key]: e,
+    }));
+  };
+
+  const amountInfo = (e) => {
+    let amountValue = parseFloat(add.rate) * parseFloat(add.qty) + parseFloat(e);
+    productChange(amountValue, "amount");
+    // productChange(e, "freight");
+    setAmount(amount + amountValue);
+  };
+  // array of object calculation
+  const editInput = (dis, i, data) => {
+    let editData = [];
+    editData = [...arrayObject];
+    editData[i][data] = dis;
+    setArrayObject(editData);
+    amountInfo(dis);
+  };
+  // set display
+  const editDisplay = (data, prodArray) => {
+    setEditId(data.id);
+    setValue("supplier_name", data.supplier_name);
+    setValue(
+      "invoice_date",
+      moment(data.invoice_date).toISOString().slice(0, 10)
+    );
+    setValue(
+      "received_date",
+      moment(data.received_date).toISOString().slice(0, 10)
+    );
+    setValue("supplier", data.supplier);
+    setValue("supplier_id", data.supplier_id);
+    setValue("vehical_no", data.vehical_no);
+    setValue("invoice_no", data.invoice_no);
+    setValue("type", data.type);
+    setValue("attached_invoice", data.attached_invoice);
+    setValue("amount", data.amount);
+    setValue("debit", data.debit);
+    setValue("credit", data.credit);
+    setValue("balance", data.balance);
+
+    console.log(prodArray, "arrrayyyyyy11111");
+    //--------------------olq qty we are storing for stocks
+    setMasterArrayObject(
+      prodArray.map((item) => ({ ...item, oldQty: item.qty }))
+    );
+    setArrayObject(prodArray.map((item) => ({ ...item, oldQty: item.qty })));
+    setGrandTotal(data.grand_total);
+    setOldGrandTotal(data.grand_total);
+  };
+
+  // inside array of object delete button without api
+  const FilterDelete = (e) => {
+    var remove = [...arrayObject];
+    var index = remove.indexOf(e);
+
+    remove.splice(e, 1);
+    setArrayObject(remove);
+    revisedGTotal(remove);
+  };
+  // to change value inside input value without error
+  const upadteAdd = () => {
+    if (
+      add.size == "" ||
+      add.rate == "" ||
+      add.qty == "" ||
+      add.uom == "" ||
+      add.uom == "" ||
+      add.material_type == ""
+    ) {
+      // alert("There is a missing field product")
+
+      setIsError(true);
+    } else {
+      setArrayObject([...arrayObject, add]);
+      calculationTotalValue(add); // we store inside a button
+      console.log(arrayObject, "arrayObject");
+      setAdd({ ...initialState });
+      childRef.current.clearProdValue();
+      // setProductSelect(productSelect.product_name)
+      setIsError(false);
+    }
+  };
+  //------------Grand Total----------------//
+  const calculationTotalValue = (add) => {
+    let amountTotalValue = 0;
+    amountTotalValue =
+      (parseFloat(add.rate) * parseFloat(add.qty)) + parseFloat(add.freight);
+    let newTotal = amountTotalValue + parseFloat(grandTotal);
+    console.log(newTotal, "newtotal");
+    setGrandTotal(newTotal);
+  };
+  // we need to calculate amount when edit button is clicked to show the value
+  const getGtotal = (item) => {
+    let amountDisplay =
+      (parseFloat(item.rate) * parseFloat(item.qty)) + parseFloat(item.freight);
+    return amountDisplay;
+  };
+
+  const revisedGTotal = (add) => {
+    console.log(add.length, "karthik");
+    if (add.length === 0) {
+      setGrandTotal(0);
+    }
+    // since its in array we should use for deleted one grand total from 1 or more we go with for and if condition
+    for (let i of add) {
+      let revisedgrandtotal =
+        (parseFloat(i.rate) * parseFloat(i.qty)) + parseFloat(i.freight);
+      setGrandTotal(revisedgrandtotal);
+    }
+  };
+
+  const customStyles = {
+    rows: {
+      style: {
+        minHeight: "72px", // override the row height
+      },
+    },
+    headCells: {
+      style: {
+        paddingLeft: "8px", // override the cell padding for head cells
+        paddingRight: "8px",
+        backgroundColor: "aliceblue",
+        textTransform: "uppercase",
+        fontWeight: "bold",
+      },
+    },
+    cells: {
+      style: {
+        paddingLeft: "8px", // override the cell padding for data cells
+        paddingRight: "8px",
+      },
+    },
+  };
+  const columns = [
+    {
+      name: "SL NO",
+      selector: (row) => row.pl_main.id,
+    },
+    {
+      name: "Invoice Date",
+      selector: (row) => row.pl_main.invoice_date,
+    },
+    {
+      name: "Received On",
+      selector: (row) => row.pl_main.received_date,
+    },
+    {
+      name: "Supplier Name",
+      selector: (row) => row.pl_main.supplier,
+      color: "#fff",
+    },
+
+    {
+      name: "Invoice No",
+      selector: (row) => row.pl_main.invoice_no,
+    },
+    {
+      name: "Attached Invoice",
+      selector: (row) => row.pl_main.attached_invoice,
+      cell: (row) => (
+        <>
+          <a href={row.pl_main.attached_invoice} target="_blank">
+            Click here
+          </a>
+        </>
+      ),
+    },
+    {
+      name: "Created By",
+      selector: (row) => row.pl_main.created_by,
+      color: "#fff",
+    },
+
+    {
+      name: "Action",
+      selector: (row) => row.Action,
+      cell: (row) => (
+        <>
+          <button
+            type="button"
+            className="btn btn-dark"
+            onClick={() => {
+              editDisplay(row.pl_main, row.pl_product);
+              setLgShow(true);
+            }}
+          >
+            <i className="fa fa-pencil"></i>
+          </button>
+          <button
+            type="button"
+            className="btn btn-danger"
+            onClick={(e) => {
+              handleDelete(row.pl_main.id);
+            }}
+            style={{ marginLeft: "5px" }}
+          >
+            <i className="fa fa-trash"></i>
+          </button>
+        </>
+      ),
+    },
+  ];
+
+  useEffect(() => {
+    getAPI(apinames.GET_PURCHASE_LEDGER).then((responce) => {
+      console.log(responce.data, "purchase master getting");
+      let reversedData = responce.data.slice().reverse();
+      setGet(reversedData); // to reverse data
+      setApi(responce.data);
+    });
+    getAPI(apinames.GET_PRODUCT_MASTER).then((response) => {
+      console.log(response.data, "product master getting");
+      setProductGet(response.data);
+    });
+    getAPI(apinames.GET_SUPPLIER_MASTER).then((response) => {
+      console.log(response.data, "supplier master getting");
+      setSGet(response.data);
+    });
+  }, []);
+
+  // filter
+  const searchItems = (searchValue) => {
+    // setSearchInput(searchValue);
+    if (searchValue !== "") {
+      const filteredData = get.filter((item) => {
+        return item.pl_main.supplier
+          .toLowerCase()
+          .includes(searchValue.toLowerCase());
+      });
+      setGet(filteredData);
+    } else {
+      setGet(api);
+    }
+  };
+  //saving the old qty value seperately
+  const saveOldQty = (data) => {
+    console.log("AWEFSGRDF======", data);
+    console.log("AWEFSGRDF=====arrayObject=", masterArrayObject);
+
+    let oldqty = masterArrayObject.find((x) => x.product_id == data.id);
+    console.log("AWEFSGRDF", oldqty);
+
+    productChange(oldqty.oldQty, "oldQty"); //to sore product_id in databse
+  };
+
+
+
+
+  const onsubmit = (data) => {
+    console.log(data);
+    location.push('/PreviewPurchaseLedger', data);
+  }
+
+
+  //-------------------Edit crud------------------//
+
+  const onSubmit2 = (data1) => {
+    const newArr1 = arrayObject.map((v) => ({
+      ...v,
+      supplier_idd: data1.supplier_id,
+    }));
+    console.log(data1.attached_invoice, "12345rty6utgdsdfa");
+    const newFormData = new FormData();
+
+    newFormData.append("id", editId);
+    newFormData.append("invoice_date", data1.invoice_date);
+    newFormData.append("received_date", data1.received_date);
+    newFormData.append("supplier", data1.supplier);
+    newFormData.append("vehical_no", data1.vehical_no);
+    newFormData.append("invoice_no", data1.invoice_no);
+    if (data1.attached_invoice[0] != undefined) {
+      newFormData.append("attached_invoice", data1.attached_invoice[0]);
+    }
+    newFormData.append("type", data1.type);
+    newFormData.append("debit", data1.debit);
+    newFormData.append("balance", data1.balance);
+    newFormData.append("supplier_id", data1.supplier_id);
+    newFormData.append("grand_total", grandTotal);
+    newFormData.append("new_grand_total", oldGrandTotal);
+    newArr1.forEach((item, index) => {
+      newFormData.append(`productArray[${index}]`, JSON.stringify(item));
+    });
+
+    postFormDataAPI(apinames.PUT_PURCHASE_LEDGER, newFormData)
+      .then((response) => {
+        var status_code = response.status_code;
+        if (status_code == 200) {
+          alert("Edit is successful");
+          window.location.reload();
+        } else if (status_code == 400) {
+          alert(JSON.stringify(response.data));
+        }
+      })
+      .catch((error) => {
+        console.log(error);
+      });
+  };
+
+  const onSubmit3 = (value) => {
+    console.log(value, "qwerty");
+  };
+
+  const submitAllData = () => {
+    console.log("clicker", formRef);
+    if (formRef.current) {
+      formRef.current.submit();
+      // formRef.current.dispatchEvent(new Event("submit", { cancelable: true })); // Dispatch submit event    }
+    }
+  };
+  const handleDelete = async (id) => {
+    let comfired = window.confirm(
+      "Are you sure you want to delete the details??"
+    );
+
+    if (comfired) {
+      try {
+        deleteAPI(apinames.DELETE_PURCHASE_LEDGER + id);
+        window.location.reload();
+      } catch (error) {
+        console.log(error + "errors");
+      }
+    }
+
+    try {
+      if (window.confirm("Are you sure to delete the data??")) {
+        await axios.delete(url.server_url + `/delete_purchase_ledger/${id}`);
+      }
+    } catch (error) {
+      console.error(error);
+      // Handle the error here, e.g. show an error message to the user
+    }
+  };
+  const pathLink=(event)=>{
+    location.push("/PreviewPurchaseLedger");
+  }
+
+  return (
+    <div>
+      <Tabs
+        defaultActiveKey={1}
+        id="uncontrolled-tab-example"
+        activeKey={tab}
+        onSelect={(k) => {
+          setTab(k);
+        }}
+      >
+        <Tab eventKey={1} title="Purchase">
+          <form onSubmit={handleSubmit(onsubmit)} ref={formRef}>
+            <div className="row">
+              <div className="col-md-4">
+                <label>
+                  Supplier Name: <span className="text-danger">*</span>{" "}
+                </label>
+                <br />
+                <DynamicSearch
+                  data={sget}
+                  type={2}
+                  {...register("supplier_name")}
+                  // defValue={supplier_name}
+
+                  onChangeData={(data) => {
+                    console.log("sdsd", data);
+                    setSelect(data);
+                  }}
+                />{" "}
+                <span>
+                  {errors.supplier_name && errors.supplier_name.message}
+                </span>
+                <label>
+                  Invoice Date: <span className="text-danger">*</span>{" "}
+                </label>
+                <br />
+                <input
+                  type="date"
+                  value={values.invoice_date}
+                  {...register("invoice_date")}
+                />
+                <span className="text-danger">
+                  {errors.invoice_date && errors.invoice_date.message}
+                </span>
+                <br />
+                <label>
+                  Received Date: <span className="text-danger">*</span>{" "}
+                </label>
+                <br />
+                <input
+                  type="date"
+                  value={values.received_date}
+                  {...register("received_date")}
+                />
+                <span className="text-danger">
+                  {errors.received_date && errors.received_date.message}
+                </span>
+                <br />
+                <label>
+                  Supplier: <span className="text-danger">*</span>{" "}
+                </label>
+                <br />
+                <select value={values.supplier} {...register("supplier")}>
+                  <option value="select">select</option>
+                  <option value="supplier">Supplier</option>
+                  <option value="owner">Owner</option>
+                </select>
+                <span className="text-danger">
+                  {errors.supplier && errors.supplier.message}
+                </span>
+                <br />
+                <label>
+                  Vehicle No: <span className="text-danger">*</span>{" "}
+                </label>
+                <br />
+                <input
+                  type="text"
+                  value={values.vehical_no}
+                  {...register("vehical_no")}
+                />
+                <span className="text-danger">
+                  {errors.vehical_no && errors.vehical_no.message}
+                </span>
+                <br />
+                <label>
+                  Invoice No:
+                  {/* <span className="text-danger">*</span>{" "} */}
+                </label>
+                <br />
+                <input
+                  type="text"
+                  value={values.invoice_no}
+                  {...register("invoice_no")}
+                />
+                <span className="text-danger">
+                  {errors.invoice_no && errors.invoice_no.message}
+                </span>
+                <br />
+              </div>
+              <div className="col-md-8" style={{ width: "100px ! important" }}>
+                <label>Type: </label>
+                &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                <input
+                  type="radio"
+                  value="selling"
+                  name="selling"
+                  checked
+                  {...register("type")}
+                />
+                Selling &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                <input
+                  type="radio"
+                  value="adhoc"
+                  name="selling"
+                  {...register("type")}
+                />
+                Adhoc
+                <br />
+                <Form.Group controlId="formFile" className="mb-3">
+                  <Form.Label>Attached Invoice:</Form.Label>
+                  <Form.Control type="file" {...register("attached_invoice")} />
+                  <span>
+                    {errors.attached_invoice && errors.attached_invoice.message}
+                  </span>
+                </Form.Group>
+                <label>
+                  Freight:
+                  {/* <span className="text-danger">*</span>{" "} */}
+                </label>
+                <br />
+                <input
+                  min={0}
+                  type="number"
+                  value={values.freight}
+                  {...register("freight")}
+                />
+                <span className="text-danger">
+                  {errors.freight && errors.freight.message}
+                </span>
+                <br />
+              </div>
+            </div>
+            <br />
+            <div className="table-responsive">
+              <table className="table">
+                <thead>
+                  <tr className="bg-success text-white">
+                    <th style={{ width: "70px" }}>Sl No</th>
+                    <th>Product</th>
+                    <th>Size</th>
+                    <th>UOM</th>
+                    <th>QTY</th>
+                    <th>Sub UOM</th>
+                    <th>Sub QTY</th>
+                    <th>Unit Price(₹)</th>
+                    <th>Freight (₹)</th>
+                    <th>Amount (₹)</th>
+                    <th></th>
+                  </tr>
+                </thead>
+
+                {arrayObject.map((item, index) => (
+                  <tr>
+                    <td style={{ width: "70px" }}>{index + 1}</td>
+                    <td>
+                      <ProductSearch
+                        ref={childRef}
+                        data={productGet}
+                        defValue={item.material_type}
+                        onChangeData={(data) => {
+                          console.log("sdsd", data);
+                          setProductSelect(data);
+                        }}
+                      />
+                    </td>
+                    <td>
+                      {" "}
+                      <input
+                        type="text"
+                        value={item.size || ""}
+                        onChange={(e) =>
+                          editInput(e.target.value, index, "size")
+                        }
+                        style={{ width: "200px", padding: "0 5px" }}
+                      />
+                    </td>
+                    <td>
+                      <select
+                        value={item.uom || ""}
+                        onChange={(e) =>
+                          editInput(e.target.value, index, "uom")
+                        }
+                        style={{ width: "200px", padding: "0 5px" }}
+                      >
+                        <option value="select">Select</option>
+                        <option value="kg">KG</option>
+                        <option value="gram">Gram</option>
+                        <option value="rolls">Rolls</option>
+                        <option value="number">Number</option>
+                        <option value="pieces">Pieces</option>
+                        <option value="box">Box</option>
+                      </select>
+                    </td>
+
+                    <td>
+                      {" "}
+                      <input
+                        type="number"
+                        value={item.qty || ""}
+                        onChange={(e) =>
+                          editInput(e.target.value, index, "qty")
+                        }
+                        min={0}
+                        style={{ width: "200px", padding: "0 5px" }}
+                      />
+                    </td>
+                    <td>
+                      <select
+                        value={item.sub_uom || ""}
+                        onChange={(e) => {
+                          editInput(e.target.value, index, "sub_uom");
+                          if (e.target.value != "") {
+                            setSubQtyDisabled(false);
+                          } else {
+                            setSubQtyDisabled(true);
+                          }
+                        }}
+                        style={{ width: "200px", padding: "0 5px" }}
+                      >
+                        <option value="select">Select</option>
+                        <option value="kg">KG</option>
+                        <option value="gram">Gram</option>
+                        <option value="rolls">Rolls</option>
+                        <option value="number">Number</option>
+                        <option value="pieces">Pieces</option>
+                        <option value="box">Box</option>
+                      </select>
+                    </td>
+                    <td>
+                      {" "}
+                      <input
+                        type="number"
+                        value={item.sub_qty || ""}
+                        onChange={(e) => {
+                          editInput(e.target.value, index, "sub_qty");
+                          if (e.target.value >= 1) {
+                            console.log(item.qty);
+                            let unit_qty = parseFloat(item.qty) * e.target.value;
+                            console.log(e.target.value);
+                            console.log(unit_qty);
+                            editInput(unit_qty, index, "unit_qty");
+                          }
+                        }}
+                        min={1}
+                        disabled={subQtyDisabled}
+                        style={{ width: "200px", padding: "0 5px" }}
+                      />
+                    </td>
+                    <td>
+                      {" "}
+                      <input
+                        type="text"
+                        value={item.rate || ""}
+                        onChange={(e) =>
+                          editInput(e.target.value, index, "rate")
+                        }
+                        min={0}
+                        style={{ width: "200px", padding: "0 5px" }}
+                      />
+                    </td>
+
+                    <td>
+                      {" "}
+                      <input
+                        type="text"
+                        value={item.freight || ""}
+                        onChange={(e) =>
+                          editInput(e.target.value, index, "freight")
+                        }
+                        style={{ width: "200px", padding: "0 5px" }}
+                      />
+                    </td>
+                    <td>
+                      {" "}
+                      <input
+                        type="number"
+                        value={getGtotal(item)}
+                        onChange={(e) =>
+                          editInput(e.target.value, index, "amount")
+                        }
+                        style={{ width: "200px", padding: "0 5px" }}
+                      />
+                    </td>
+
+                    <td>
+                      <button
+                        type="button"
+                        className="btn btn-danger"
+                        onClick={() => {
+                          FilterDelete(index);
+                        }}
+                        style={{ backgroundColor: "#dc3545" }}
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </table>
+            </div>
+
+            <div className="table-responsive">
+              <table className="table">
+                <thead>
+                  <th>Product</th>
+                  <th>Size</th>
+                  <th>UOM</th>
+                  <th>QTY</th>
+                  <th>Sub UOM</th>
+                  <th>Sub QTY</th>
+                  <th>Unit Price(₹)</th>
+                  <th>Freight (₹)</th>
+                  <th>Amount (₹)</th>
+                </thead>
+                <tbody>
+                  <td>
+                    <ProductSearch
+                      data={productGet}
+                      ref={childRef}
+                      onChangeData={(data) => {
+                        console.log("sdsd", data);
+                        setProductSelect(data);
+                        productChange(data.product_name, "material_type"); // to store product_name
+                        productChange(data.id, "product_id"); //to sore product_id in databse
+                      }}
+                    />
+
+                    {/* <span>
+                      {errors.material_type && errors.material_type.message}
+                    </span> */}
+                  </td>
+                  <td>
+                    <input
+                      onChange={(e) => productChange(e.target.value, "size")}
+                      value={add.size}
+                      type="text"
+                      style={{ padding: "0 5px", width: "100px" }}
+                      // {...register("size")}
+                    />
+                    <span className="text-danger">
+                      {isError && add.size == "" && "Size cannot be empty"}
+                    </span>
+                    {/* <span className="text-danger"> {errors.size && errors.size.message}</span> */}
+                  </td>
+
+                  <td>
+                    <select
+                      onChange={(e) => {
+                        productChange(e.target.value, "uom");
+                      }}
+                      value={add.uom}
+                      style={{ padding: "0 5px", width: "100px" }}
+                      // {...register("uom")}
+                    >
+                      <option value="select">Select</option>
+                      <option value="kg">KG</option>
+                      <option value="gram">Gram</option>
+                      <option value="rolls">Rolls</option>
+                      <option value="number">Number</option>
+                      <option value="pieces">Pieces</option>
+                      <option value="box">Box</option>
+                    </select>
+                    {/* <span className="text-danger">{errors.uom && errors.uom.message}</span> */}
+                  </td>
+
+                  <td>
+                    <input
+                      min={0}
+                      onChange={(e) => {
+                        productChange(e.target.value, "qty");
+
+                        if (e.target.value >= 1) {
+                          let unit_qty = e.target.value;
+                          console.log(unit_qty, "unit_qty");
+
+                          productChange(unit_qty, "unit_qty");
+                        }
+                      }}
+                      value={add.qty}
+                      type="number"
+                      style={{ padding: "0 5px", width: "50px" }}
+                      // {...register("qty")}
+                    />
+                    <span className="text-danger">
+                      {isError && add.qty == "" && "Qty cannot be empty"}
+                    </span>
+                    {/* <span className="text-danger">{errors.qty && errors.qty.message}</span> */}
+                  </td>
+
+                  {/* <td>
+                    {" "}
+                    <select
+                      onChange={(e) => {
+                        productChange(e.target.value, "sub_uom");
+                      }}
+                      value={add.sub_uom}
+                      style={{ padding: "0 5px", width: "100px" }}
+                    >
+                      <option value="select">Select</option>
+                      <option value="kg">KG</option>
+                      <option value="gram">Gram</option>
+                      <option value="rolls">Rolls</option>
+                      <option value="number">Number</option>
+                      <option value="pieces">Pieces</option>
+                      <option value="box">Box</option>
+                    </select>
+                    <span>{errors.sub_uom && errors.sub_uom.message}</span>
+                  </td>
+                  <td>
+                    <input
+                      min={0}
+                      onChange={(e) => {
+                        productChange(e.target.value, "sub_qty");
+                        if (e.target.value >= 1) {
+                          let unit_qty = parseFloat(add.qty) * e.target.value;
+                          productChange(unit_qty, "unit_qty");
+                        }
+                      }}
+                      value={add.sub_qty}
+                      type="number"
+                      style={{ padding: "0 5px", width: "50px" }}
+                      // {...register("qty")}
+                    />
+                    <span>{errors.sub_qty && errors.sub_qty.message}</span>
+                  </td> */}
+
+                  <td>
+                    <select
+                      onChange={(e) => {
+                        productChange(e.target.value, "sub_uom");
+
+                        if (e.target.value != "") {
+                          setSubQtyDisabled(false);
+                        } else {
+                          setSubQtyDisabled(true);
+                        }
+                      }}
+                      value={add.sub_uom}
+                      style={{ padding: "0 5px", width: "100px" }}
+                    >
+                      <option value="select">Select</option>
+                      <option value="kg">KG</option>
+                      <option value="gram">Gram</option>
+                      <option value="rolls">Rolls</option>
+                      <option value="number">Number</option>
+                      <option value="pieces">Pieces</option>
+                      <option value="box">Box</option>
+                    </select>
+                    <span>{errors.sub_uom && errors.sub_uom.message}</span>
+                  </td>
+                  <td>
+                    <input
+                      min={1}
+                      onChange={(e) => {
+                        productChange(e.target.value, "sub_qty");
+                        if (e.target.value >= 1) {
+                          let unit_qty = parseFloat(add.qty) * e.target.value;
+                          console.log(unit_qty, "unit_qty");
+
+                          productChange(unit_qty, "unit_qty");
+                        }
+                      }}
+                      value={add.sub_qty}
+                      type="number"
+                      style={{ padding: "0 5px", width: "50px" }}
+                      disabled={subQtyDisabled}
+                    />
+
+                    {/* <span>{errors.sub_qty && errors.sub_qty.message}</span> */}
+                  </td>
+
+                  <td>
+                    <input
+                      onChange={(e) => productChange(e.target.value, "rate")}
+                      type="number"
+                      value={add.rate}
+                      min={0}
+                      style={{ padding: "0 5px", width: "70px" }}
+                      // {...register("rate")}
+                    />
+                    <span className="text-danger">
+                      {isError && add.rate == "" && "Rate cannot be empty"}
+                    </span>
+
+                    {/* <span className="text-danger">{errors.rate && errors.rate.message}</span> */}
+                  </td>
+
+                  <td>
+                    <input
+                      onChange={(e) => {
+                        amountInfo(e.target.value);
+                        productChange(e.target.value, "freight");
+                      }}
+                      value={add.freight}
+                      type="number"
+                      style={{ padding: "0 5px", width: "100px" }}
+                      // {...register("freight")}
+                    />
+                    <span className="text-danger">
+                      {isError &&
+                        add.freight == "" &&
+                        "Freight cannot be empty"}
+                    </span>
+                    {/* <span className="text-danger">{errors.freight && errors.freight.message}</span> */}
+                  </td>
+                  <td>
+                    <input
+                      value={add.amount}
+                      type="number"
+                      style={{ padding: "0 5px", width: "200px" }}
+                      // {...register("amount")}
+                    />
+                    <span>{errors.amount && errors.amount.message}</span>
+                  </td>
+
+                  <td>
+                    <button type="button" onClick={upadteAdd}>
+                      ADD
+                    </button>
+                  </td>
+                </tbody>
+              </table>
+            </div>
+           
+           
+              <button
+                type="Submit"
+                className="btn btn-primary"
+                style={{ position: "relative", bottom: "-100px" }}
+              >
+                SAVE
+              </button>
+       
+            <div style={{ float: "right" }}>
+              <h6>
+                Grand Total (₹):
+                <span>{grandTotal}</span>
+              </h6>
+            </div>
+          </form>
+
+          {/* <button onClick={submitAllData} className="btn btn-primary">
+            SAVE ALL
+          </button> */}
+        </Tab>
+        <Tab eventKey={2} title="Purchase History">
+          <div
+            className="main-container"
+            style={{ backgroundColor: "aliceblue" }}
+          >
+            <div
+              className="date-container"
+              style={{
+                marginLeft: "120px",
+                paddingTop: "30px",
+              }}
+            >
+              <td>
+                <p>From:</p>
+              </td>
+              <td>
+                <DatePicker
+                  className="date"
+                  selected={startDate}
+                  onChange={(date) => setStartDate(date)}
+                />
+              </td>
+              <td>
+                <p className="ms-3 me-1">End:</p>
+              </td>
+              <td>
+                <DatePicker
+                className="date"
+                  selected={endDate}
+                  onChange={(date) => setEndDate(date)}
+                />
+              </td>
+              <td>
+                <button type="button" className="btn btn-primary ms-3">
+                  Refresh
+                </button>
+              </td>
+            </div>
+          </div>
+          <br />
+
+          <div>
+            <DataTable
+              columns={columns}
+              data={get}
+              pagination
+              fixedHeader
+              fixedHeaderScrollHeight="450px"
+              // selectableRows
+              // selectRowsHighlight
+              highlightOnHover
+              actions={<button className="btn btn-primary">Export</button>}
+              subHeader
+              subHeaderComponent={
+                <input
+                  type="serach"
+                  
+                  placeholder="Search Supplier Name"
+                  className="w-25 form-control mb-2"
+                  onChange={(e) => searchItems(e.target.value)}
+                />
+              }
+              customStyles={customStyles}
+            />
+          </div>
+
+          {/* </div>  */}
+        </Tab>
+      </Tabs>
+      <div>
+        <Modal
+          size="lg"
+          show={lgShow}
+          onHide={() => setLgShow(false)}
+          aria-labelledby="example-modal-sizes-title-lg"
+        >
+          <Modal.Header closeButton>
+            <Modal.Title id="example-modal-sizes-title-lg">
+              Purchase History
+            </Modal.Title>
+          </Modal.Header>
+          <Modal.Body>
+            <form onSubmit={handleSubmit2(onSubmit2)}>
+              <div className="row">
+                <div className="col-md-4">
+                  <label>Supplier Name:</label>
+                  <h5>{values.supplier_name}</h5>
+                  <label>
+                    Invoice Date:<span className="text-danger">*</span>{" "}
+                  </label>
+                  <br />
+                  <input
+                    type="date"
+                    value={values.invoice_date}
+                    {...register2("invoice_date")}
+                  />
+                  <span>
+                    {errors2.invoice_date && errors2.invoice_date.message}
+                  </span>
+                  <br />
+                  <label>
+                    Received Date: <span className="text-danger">*</span>
+                  </label>
+                  <br />
+                  <input
+                    type="date"
+                    value={values.received_date}
+                    {...register2("received_date")}
+                  />
+                  <span>
+                    {errors2.received_date && errors2.received_date.message}
+                  </span>
+                  <br />
+                  <label>
+                    Supplier: <span className="text-danger">*</span>
+                  </label>
+                  <br />
+                  <select value={values.supplier} {...register2("supplier")}>
+                    <option value="select">select</option>
+                    <option value="supplier">Supplier</option>
+                    <option value="owner">Owner</option>
+                  </select>
+                  <span>{errors2.supplier && errors2.supplier.message}</span>
+                  <br />
+                  <label>
+                    Vehicle No: <span className="text-danger">*</span>
+                  </label>
+                  <br />
+                  <input
+                    type="text"
+                    value={values.vehical_no}
+                    {...register2("vehical_no")}
+                  />
+                  <span>
+                    {errors2.vehical_no && errors2.vehical_no.message}
+                  </span>
+                  <br />
+                  <label>
+                    Invoice No: <span className="text-danger">*</span>
+                  </label>
+                  <br />
+                  <input
+                    type="text"
+                    value={values.invoice_no}
+                    {...register2("invoice_no")}
+                  />
+                  <span>
+                    {errors2.invoice_no && errors2.invoice_no.message}
+                  </span>
+                  <br />
+                </div>
+                <div
+                  className="col-md-8"
+                  style={{ width: "100px ! important" }}
+                >
+                  <label>Type:</label>
+                  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                  <input
+                    type="radio"
+                    value="selling"
+                    name="selling"
+                    checked
+                    {...register2("type")}
+                  />
+                  Selling &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                  <input
+                    type="radio"
+                    value="adhoc"
+                    name="selling"
+                    {...register2("type")}
+                  />
+                  Adhoc
+                  <br />
+                  {/* <Form.Group controlId="formFile" className="mb-3">
+                    <Form.Label>Attached Invoice:</Form.Label>
+                    <Form.Control
+                      type="file"
+                      {...register("attached_invoice")}
+                    />
+                    <span>
+                      {errors.attached_invoice &&
+                        errors.attached_invoice.message}
+                    </span>
+                  </Form.Group> */}
+                  <Form.Group controlId="formFile" className="mb-3">
+                    <Form.Label>Attached Invoice:</Form.Label>
+                    <Form.Control
+                      type="file"
+                      {...register2("attached_invoice")}
+                    />
+                    <span>
+                      {errors2.attached_invoice &&
+                        errors2.attached_invoice.message}
+                    </span>
+                  </Form.Group>
+                </div>
+              </div>
+              <br />
+              <div className="table-responsive">
+                <table className="table">
+                  <thead>
+                    <tr className="bg-success text-white">
+                      <th style={{ width: "70px" }}>Sl No</th>
+                      <th>Product</th>
+                      <th>Size</th>
+                      <th>UOM</th>
+                      <th>QTY</th>
+                      <th>Sub UOM</th>
+                      <th>Sub QTY</th>
+                      <th>Unit Price(₹)</th>
+                      <th>Freight (₹)</th>
+                      <th>Amount (₹)</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+
+                  {arrayObject.map((item, index) => (
+                    <tr>
+                      <td style={{ width: "70px" }}>{index + 1}</td>
+                      <td>
+                        <ProductSearch
+                          ref={childRef}
+                          data={productGet}
+                          defValue={item.material_type}
+                          onChangeData={(data) => {
+                            console.log("sdsd", data);
+                            setProductSelect(data);
+                          }}
+                        />
+                      </td>
+                      <td>
+                        {" "}
+                        <input
+                          type="text"
+                          value={item.size || ""}
+                          onChange={(e) =>
+                            editInput(e.target.value, index, "size")
+                          }
+                          style={{ width: "200px", padding: "0 5px" }}
+                        />
+                      </td>
+                      <td>
+                        <select
+                          value={item.uom || ""}
+                          onChange={(e) =>
+                            editInput(e.target.value, index, "uom")
+                          }
+                          style={{ width: "200px", padding: "0 5px" }}
+                        >
+                          <option value="select">Select</option>
+                          <option value="kg">KG</option>
+                          <option value="gram">Gram</option>
+                          <option value="rolls">Rolls</option>
+                          <option value="number">Number</option>
+                          <option value="pieces">Pieces</option>
+                          <option value="box">Box</option>
+                        </select>
+                      </td>
+
+                      <td>
+                        {" "}
+                        <input
+                          type="number"
+                          value={item.qty || ""}
+                          onChange={(e) =>
+                            editInput(e.target.value, index, "qty")
+                          }
+                          min={0}
+                          style={{ width: "200px", padding: "0 5px" }}
+                        />
+                      </td>
+                      <td>
+                        <select
+                          value={item.sub_uom || ""}
+                          onChange={(e) => {
+                            editInput(e.target.value, index, "sub_uom");
+                            if (e.target.value != "") {
+                              setSubQtyDisabled(false);
+                            } else {
+                              setSubQtyDisabled(true);
+                            }
+                          }}
+                          style={{ width: "200px", padding: "0 5px" }}
+                        >
+                          <option value="select">Select</option>
+                          <option value="kg">KG</option>
+                          <option value="gram">Gram</option>
+                          <option value="rolls">Rolls</option>
+                          <option value="number">Number</option>
+                          <option value="pieces">Pieces</option>
+                          <option value="box">Box</option>
+                        </select>
+                      </td>
+                      <td>
+                        {" "}
+                        <input
+                          type="number"
+                          value={item.sub_qty || ""}
+                          onChange={(e) => {
+                            editInput(e.target.value, index, "sub_qty");
+
+                            if (e.target.value >= 1) {
+                              let unit_qty =
+                                parseFloat(item.qty) * e.target.value;
+                              editInput(unit_qty, "unit_qty");
+                            }
+                          }}
+                          min={1}
+                          disabled={subQtyDisabled}
+                          style={{ width: "200px", padding: "0 5px" }}
+                        />
+                      </td>
+                      <td>
+                        {" "}
+                        <input
+                          type="text"
+                          value={item.rate || ""}
+                          onChange={(e) =>
+                            editInput(e.target.value, index, "rate")
+                          }
+                          min={0}
+                          style={{ width: "200px", padding: "0 5px" }}
+                        />
+                      </td>
+
+                      <td>
+                        {" "}
+                        <input
+                          type="text"
+                          value={item.freight || ""}
+                          onChange={(e) =>
+                            editInput(e.target.value, index, "freight")
+                          }
+                          style={{ width: "200px", padding: "0 5px" }}
+                        />
+                      </td>
+                      <td>
+                        {" "}
+                        <input
+                          type="number"
+                          value={getGtotal(item)}
+                          onChange={(e) =>
+                            editInput(e.target.value, index, "amount")
+                          }
+                          style={{ width: "200px", padding: "0 5px" }}
+                        />
+                      </td>
+                      <td>
+                        {" "}
+                        <button
+                          type="button"
+                          className="btn btn-danger"
+                          onClick={() => {
+                            FilterDelete(index);
+                          }}
+                          style={{ backgroundColor: "#dc3545" }}
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </table>
+              </div>
+
+              <div className="table-responsive">
+                <table className="table">
+                  <thead>
+                    <th>Product</th>
+                    <th>Size</th>
+                    <th>UOM</th>
+                    <th>QTY</th>
+                    <th>Sub UOM</th>
+                    <th>Sub QTY</th>
+                    <th>Unit Price(₹)</th>
+                    <th>Freight (₹)</th>
+                    <th>Amount (₹)</th>
+                  </thead>
+                  <tbody>
+                    <td>
+                      <ProductSearch
+                        data={productGet}
+                        ref={childRef}
+                        onChangeData={(data) => {
+                          console.log("sdsd", data);
+                          setProductSelect(data);
+                          productChange(data.product_name, "material_type"); // to store product_name
+                          productChange(data.id, "product_id"); //to sore product_id in databse
+                        }}
+                      />
+
+                      <span>
+                        {errors2.material_type && errors2.material_type.message}
+                      </span>
+                    </td>
+                    <td>
+                      <input
+                        onChange={(e) => productChange(e.target.value, "size")}
+                        value={add.size}
+                        type="text"
+                        style={{ padding: "0 5px", width: "100px" }}
+                        // {...register("size")}
+                      />
+                      <span className="text-danger">
+                        {isError && add.size == "" && "Size cannot be empty"}
+                      </span>
+                    </td>
+
+                    <td>
+                      <select
+                        onChange={(e) => {
+                          productChange(e.target.value, "uom");
+                        }}
+                        value={add.uom}
+                        style={{ padding: "0 5px", width: "100px" }}
+                        // {...register("uom")}
+                      >
+                        <option value="select">Select</option>
+                        <option value="kg">KG</option>
+                        <option value="gram">Gram</option>
+                        <option value="rolls">Rolls</option>
+                        <option value="number">Number</option>
+                        <option value="pieces">Pieces</option>
+                        <option value="box">Box</option>
+                      </select>
+                      <span>{errors2.uom && errors2.uom.message}</span>
+                    </td>
+
+                    <td>
+                      <input
+                        min={0}
+                        onChange={(e) => {
+                          productChange(e.target.value, "qty");
+                        }}
+                        value={add.qty}
+                        type="number"
+                        style={{ padding: "0 5px", width: "50px" }}
+                        // {...register("qty")}
+                      />
+                      <span className="text-danger">
+                        {isError && add.qty == "" && "QTY cannot be empty"}
+                      </span>
+                    </td>
+
+                    <td>
+                      {" "}
+                      <select
+                        onChange={(e) => {
+                          productChange(e.target.value, "sub_uom");
+                          if (e.target.value != "") {
+                            setSubQtyDisabled(false);
+                          } else {
+                            setSubQtyDisabled(true);
+                          }
+                        }}
+                        value={add.sub_uom}
+                        style={{ padding: "0 5px", width: "100px" }}
+                      >
+                        <option value="select">Select</option>
+                        <option value="kg">KG</option>
+                        <option value="gram">Gram</option>
+                        <option value="rolls">Rolls</option>
+                        <option value="number">Number</option>
+                        <option value="pieces">Pieces</option>
+                        <option value="box">Box</option>
+                      </select>
+                      <span>{errors2.sub_uom && errors2.sub_uom.message}</span>
+                    </td>
+                    <td>
+                      <input
+                        min={1}
+                        onChange={(e) => {
+                          productChange(e.target.value, "sub_qty");
+                          if (e.target.value >= 1) {
+                            let unit_qty = parseFloat(add.qty) * e.target.value;
+                            productChange(unit_qty, "unit_qty");
+                          }
+                        }}
+                        value={add.sub_qty}
+                        type="number"
+                        disabled={subQtyDisabled}
+                        style={{ padding: "0 5px", width: "50px" }}
+                        // {...register("qty")}
+                      />
+                      <span>{errors2.sub_qty && errors2.sub_qty.message}</span>
+                    </td>
+
+                    <td>
+                      <input
+                        onChange={(e) => productChange(e.target.value, "rate")}
+                        type="number"
+                        value={add.rate}
+                        min={0}
+                        style={{ padding: "0 5px", width: "70px" }}
+                        // {...register("rate")}
+                      />
+                      <span className="text-danger">
+                        {isError && add.rate == "" && "Rate cannot be empty"}
+                      </span>
+                    </td>
+
+                    <td>
+                      <input
+                        onChange={(e) => {
+                          amountInfo(e.target.value);
+                          productChange(e.target.value, "freight");
+                        }}
+                        value={add.freight}
+                        type="number"
+                        style={{ padding: "0 5px", width: "100px" }}
+                        // {...register("freight")}
+                      />
+                      <span className="text-danger">
+                        {isError &&
+                          add.freight == "" &&
+                          "Freight cannot be empty"}
+                      </span>
+                    </td>
+                    <td>
+                      <input
+                        value={add.amount}
+                        type="number"
+                        style={{ padding: "0 5px", width: "200px" }}
+                        // {...register("amount")}
+                      />
+                      <span>{errors2.amount && errors2.amount.message}</span>
+                    </td>
+
+                    <td>
+                      <button type="button" onClick={upadteAdd}>
+                        ADD
+                      </button>
+                    </td>
+                  </tbody>
+                  <button type="Submit" className="btn btn-primary">
+                    SAVE
+                  </button>
+                </table>
+              </div>
+              <div style={{ float: "right" }}>
+                <h6>
+                  Grand Total (₹):
+                  <span>{grandTotal}</span>
+                </h6>
+              </div>
+            </form>
+          </Modal.Body>
+        </Modal>
+      </div>
+    </div>
+  );
+};
+export default Purchaseledger;

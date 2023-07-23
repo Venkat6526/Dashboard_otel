@@ -1,0 +1,6 @@
+.table tr td:first-child {
+    width: 300px !important;
+  };
+  span{
+    font-weight: "400" ;
+  }

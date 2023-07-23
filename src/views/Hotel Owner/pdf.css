@@ -1,0 +1,26 @@
+
+.pdfRightTable tr td{
+    padding: 10px;
+    font-size: 14px;
+    border: 2px solid #111;
+
+}
+.pdfTotalAmount tr td
+{
+    padding:8px;
+
+}
+.pdfTotalAmount table{
+    width: 97.5%;
+}
+/* .table{
+    width: 97%;
+    margin-top: 10px;
+    
+} */
+.table td, .table th{
+    border-color: #111;
+}
+.table{
+    margin-bottom: 0 !important;
+}
